@@ -73,10 +73,13 @@
   function mergePages(list) {
     const byEl = new Map(pages.map((p) => [p.el, p]));
     const srcs = new Set(pages.map((p) => p.src));
+    let changed = false;
     for (const item of list) {
       const existing = byEl.get(item.el);
       if (existing) {
+        if (existing.src !== item.src || existing.pending !== item.pending) changed = true;
         existing.src = item.src;
+        existing.pending = item.pending;
         continue;
       }
       if (!item.pending && srcs.has(item.src)) continue;
@@ -88,7 +91,9 @@
       if (at <= index) index++;
       byEl.set(item.el, item);
       srcs.add(item.src);
+      changed = true;
     }
+    return changed;
   }
 
   /* ---------------- 동적 로딩 (페이지 동기 스크롤) ---------------- */
@@ -101,44 +106,56 @@
     return document.scrollingElement || document.documentElement;
   }
 
+  const LOOK_AHEAD = 5; // 남은 이미지가 이보다 적으면 미리 다음 이미지를 불러옴
+
+  // 마지막 이미지 바로 아래 영역이 화면에 들어오도록 스크롤 (step 이 클수록 더 아래로)
+  // 페이지 맨 끝으로 바로 건너뛰면 그 사이의 지연 로딩 이미지가 화면에 들어오지 않아 로딩되지 않음
+  function lookAhead(step = 0) {
+    const last = pages[pages.length - 1];
+    if (!last || !last.el.isConnected) return;
+    last.el.scrollIntoView({ block: "end", behavior: "instant" });
+    scrollerOf(last.el).scrollBy({ top: innerHeight * 0.8 * (step + 1), behavior: "instant" });
+  }
+
   // 뷰어 뒤의 실제 페이지를 현재 이미지 위치로 스크롤해서
   // 사이트의 지연 로딩 / 무한 스크롤이 동작하도록 함
   function syncPage() {
     if (!state.loadMore || !pages.length) return;
-    const nearEnd = index >= pages.length - 3;
-    const target = pages[nearEnd ? pages.length - 1 : index].el;
-    if (!target.isConnected) return;
-    if (nearEnd) {
-      // 마지막 이미지 아래쪽이 화면에 들어오도록
-      target.scrollIntoView({ block: "end", behavior: "instant" });
-      scrollerOf(target).scrollBy({ top: innerHeight * 0.8, behavior: "instant" });
-    } else {
-      target.scrollIntoView({ block: "center", behavior: "instant" });
-    }
+    // 1) 현재~앞쪽 몇 장 중 아직 로딩 안 된(자리표시) 페이지가 있으면 그 위치로
+    // 2) 없고 끝에 가까우면 마지막 이미지 아래로 (다음 이미지 로딩 유도)
+    // 3) 그 외에는 현재 이미지 위치로
+    const pending = pages.slice(index, index + LOOK_AHEAD + 1).find((p) => p.pending && p.el.isConnected);
+    if (pending) pending.el.scrollIntoView({ block: "start", behavior: "instant" });
+    else if (index >= pages.length - LOOK_AHEAD) lookAhead();
+    else if (pages[index].el.isConnected) pages[index].el.scrollIntoView({ block: "center", behavior: "instant" });
+    // 스크롤 직후 로딩된 이미지를 빨리 반영
+    clearTimeout(syncScanTimer);
+    syncScanTimer = setTimeout(() => isOpen && scan(), 300);
   }
+  let syncScanTimer = 0;
 
-  // 마지막 이미지에서 다음으로 넘길 때: 페이지 끝까지 스크롤하며 새 이미지를 기다림
+  // 마지막 이미지에서 다음으로 넘길 때: 마지막 이미지 아래부터 조금씩 내려가며 새 이미지를 기다림
   let waitTimer = 0;
   let waitStarted = 0;
   function waitForMore() {
     if (waitTimer) return;
     waitStarted = Date.now();
+    let step = 0;
     ui.status.textContent = "";
     toast("다음 이미지 불러오는 중…", 0);
     const tick = () => {
-      const last = pages[pages.length - 1];
-      const scroller = last && last.el.isConnected ? scrollerOf(last.el) : document.scrollingElement;
-      scroller.scrollTo({ top: scroller.scrollHeight, behavior: "instant" });
       scan();
-      if (!waitTimer) return;
-      if (Date.now() - waitStarted > 5000) {
+      if (!waitTimer) return; // scan() 에서 새 이미지를 찾아 넘어감
+      if (Date.now() - waitStarted > 6000) {
         stopWaiting();
         toast("마지막 이미지입니다");
         return;
       }
-      waitTimer = setTimeout(tick, 500);
+      lookAhead(step++ % 4); // 바로 아래부터 점점 더 아래까지 (무한 스크롤 감지용 스크롤 이벤트도 발생)
+      waitTimer = setTimeout(tick, 400);
     };
-    waitTimer = setTimeout(tick, 0);
+    lookAhead(step++);
+    waitTimer = setTimeout(tick, 250);
   }
 
   function stopWaiting() {
@@ -150,9 +167,18 @@
   /* ---------------- 조건 감시 & 실행 버튼 ---------------- */
 
   let scanTimer = 0;
-  function scheduleScan(delay = 400) {
+  let scanDeadline = 0;
+  function scheduleScan(delay = isOpen ? 120 : 400) {
+    // DOM 변경이 계속되는 페이지에서도 최대 대기 시간 안에는 반드시 스캔
+    const now = Date.now();
+    if (!scanDeadline) scanDeadline = now + (isOpen ? 400 : 1000);
     clearTimeout(scanTimer);
-    scanTimer = setTimeout(scan, delay);
+    scanTimer = setTimeout(runScan, Math.max(0, Math.min(delay, scanDeadline - now)));
+  }
+  function runScan() {
+    scanTimer = 0;
+    scanDeadline = 0;
+    scan();
   }
 
   function scan() {
@@ -163,7 +189,7 @@
     const list = collect();
     if (isOpen) {
       // 열린 상태에서 새로 로딩된 이미지 반영 (현재 페이지 유지)
-      mergePages(list);
+      const changed = mergePages(list);
       if (waitTimer && index < pages.length - 1) {
         stopWaiting();
         go(index + 1);
@@ -172,6 +198,7 @@
       } else {
         renderMeta();
       }
+      if (changed && !waitTimer) syncPage(); // 이어서 앞쪽 이미지 계속 불러오기
       return;
     }
     const eligible = list.length >= state.minCount;
