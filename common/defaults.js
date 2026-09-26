@@ -31,6 +31,7 @@
       showLauncher: true,
       autoOpen: false,
       wheelNav: true,
+      loadMore: true, // 넘길 때 뒤의 페이지도 스크롤해서 동적 로딩 이미지 불러오기
       background: "#111111",
     },
   };

@@ -6,7 +6,7 @@
   const LAZY_ATTRS = ["data-src", "data-original", "data-lazy-src", "data-lazy", "data-url", "data-echo"];
 
   let state = { ...WebScope.DEFAULTS.comicViewer };
-  let pages = []; // { el, src }
+  let pages = []; // { el, src, pending }
   let index = 0;
   let isOpen = false;
   let autoOpened = false;
@@ -49,17 +49,102 @@
     return byNatural || byRendered;
   }
 
+  // 로딩 중 자리표시(스피너, 1px gif 등)로 보이는 작은 이미지
+  const isPlaceholder = (img) => img.naturalWidth < 64 && img.naturalHeight < 64;
+
   function collect() {
     const seen = new Set();
     const list = [];
     document.querySelectorAll("img").forEach((el) => {
       if (!qualifies(el)) return;
       const src = srcOf(el);
-      if (!src || seen.has(src)) return;
+      if (!src) return;
+      // 자리표시 이미지는 주소가 같아도 서로 다른 페이지로 취급
+      const pending = src === (el.currentSrc || el.src) && el.complete && isPlaceholder(el);
+      if (!pending && seen.has(src)) return;
       seen.add(src);
-      list.push({ el, src });
+      list.push({ el, src, pending });
     });
     return list;
+  }
+
+  // 기존 목록은 유지한 채 새 이미지만 문서 순서에 맞춰 끼워 넣음
+  // (화면 밖 이미지를 DOM 에서 지우는 사이트에서도 이미 본 페이지가 사라지지 않도록)
+  function mergePages(list) {
+    const byEl = new Map(pages.map((p) => [p.el, p]));
+    const srcs = new Set(pages.map((p) => p.src));
+    for (const item of list) {
+      const existing = byEl.get(item.el);
+      if (existing) {
+        existing.src = item.src;
+        continue;
+      }
+      if (!item.pending && srcs.has(item.src)) continue;
+      let at = pages.findIndex(
+        (p) => p.el.isConnected && item.el.compareDocumentPosition(p.el) & Node.DOCUMENT_POSITION_FOLLOWING
+      );
+      if (at < 0) at = pages.length;
+      pages.splice(at, 0, item);
+      if (at <= index) index++;
+      byEl.set(item.el, item);
+      srcs.add(item.src);
+    }
+  }
+
+  /* ---------------- 동적 로딩 (페이지 동기 스크롤) ---------------- */
+
+  function scrollerOf(el) {
+    for (let n = el.parentElement; n && n !== document.body && n !== document.documentElement; n = n.parentElement) {
+      const oy = getComputedStyle(n).overflowY;
+      if ((oy === "auto" || oy === "scroll") && n.scrollHeight > n.clientHeight) return n;
+    }
+    return document.scrollingElement || document.documentElement;
+  }
+
+  // 뷰어 뒤의 실제 페이지를 현재 이미지 위치로 스크롤해서
+  // 사이트의 지연 로딩 / 무한 스크롤이 동작하도록 함
+  function syncPage() {
+    if (!state.loadMore || !pages.length) return;
+    const nearEnd = index >= pages.length - 3;
+    const target = pages[nearEnd ? pages.length - 1 : index].el;
+    if (!target.isConnected) return;
+    if (nearEnd) {
+      // 마지막 이미지 아래쪽이 화면에 들어오도록
+      target.scrollIntoView({ block: "end", behavior: "instant" });
+      scrollerOf(target).scrollBy({ top: innerHeight * 0.8, behavior: "instant" });
+    } else {
+      target.scrollIntoView({ block: "center", behavior: "instant" });
+    }
+  }
+
+  // 마지막 이미지에서 다음으로 넘길 때: 페이지 끝까지 스크롤하며 새 이미지를 기다림
+  let waitTimer = 0;
+  let waitStarted = 0;
+  function waitForMore() {
+    if (waitTimer) return;
+    waitStarted = Date.now();
+    ui.status.textContent = "";
+    toast("다음 이미지 불러오는 중…", 0);
+    const tick = () => {
+      const last = pages[pages.length - 1];
+      const scroller = last && last.el.isConnected ? scrollerOf(last.el) : document.scrollingElement;
+      scroller.scrollTo({ top: scroller.scrollHeight, behavior: "instant" });
+      scan();
+      if (!waitTimer) return;
+      if (Date.now() - waitStarted > 5000) {
+        stopWaiting();
+        toast("마지막 이미지입니다");
+        return;
+      }
+      waitTimer = setTimeout(tick, 500);
+    };
+    waitTimer = setTimeout(tick, 0);
+  }
+
+  function stopWaiting() {
+    clearTimeout(waitTimer);
+    waitTimer = 0;
+    if (ui) ui.toast.classList.remove("show");
   }
 
   /* ---------------- 조건 감시 & 실행 버튼 ---------------- */
@@ -78,11 +163,15 @@
     const list = collect();
     if (isOpen) {
       // 열린 상태에서 새로 로딩된 이미지 반영 (현재 페이지 유지)
-      const curSrc = pages[index] && pages[index].src;
-      pages = list.length ? list : pages;
-      const i = pages.findIndex((p) => p.src === curSrc);
-      if (i >= 0) index = i;
-      renderMeta();
+      mergePages(list);
+      if (waitTimer && index < pages.length - 1) {
+        stopWaiting();
+        go(index + 1);
+      } else if (pages[index] && ui.img.getAttribute("src") !== pages[index].src) {
+        render(); // 자리표시 이미지가 실제 이미지로 바뀐 경우
+      } else {
+        renderMeta();
+      }
       return;
     }
     const eligible = list.length >= state.minCount;
@@ -256,6 +345,7 @@
     });
 
     ui.img.addEventListener("load", () => {
+      if (isPlaceholder(ui.img)) return; // 실제 이미지로 바뀌면 scan() 이 다시 그림
       ui.img.classList.remove("loading");
       ui.status.textContent = "";
     });
@@ -280,12 +370,14 @@
     if (!pages.length) return;
     const next = Math.max(0, Math.min(pages.length - 1, i));
     if (next === index && ui.img.getAttribute("src")) {
-      if (i >= pages.length) toast("마지막 이미지입니다");
+      if (i >= pages.length) state.loadMore ? waitForMore() : toast("마지막 이미지입니다");
       else if (i < 0) toast("첫 번째 이미지입니다");
       return;
     }
+    stopWaiting();
     index = next;
     render();
+    syncPage();
   }
   const next = () => go(index + 1);
   const prev = () => go(index - 1);
@@ -303,7 +395,7 @@
       ui.img.classList.add("loading");
       ui.status.textContent = "불러오는 중…";
       ui.img.src = p.src;
-      if (ui.img.complete && ui.img.naturalWidth) {
+      if (ui.img.complete && ui.img.naturalWidth && !isPlaceholder(ui.img)) {
         ui.img.classList.remove("loading");
         ui.status.textContent = "";
       }
@@ -381,11 +473,11 @@
   }
 
   let toastTimer = 0;
-  function toast(msg) {
+  function toast(msg, duration = 1200) {
     ui.toast.textContent = msg;
     ui.toast.classList.add("show");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => ui.toast.classList.remove("show"), 1200);
+    if (duration) toastTimer = setTimeout(() => ui.toast.classList.remove("show"), duration);
   }
 
   let idleTimer = 0;
@@ -492,6 +584,7 @@
     ui.img.removeAttribute("src");
     renderSettings();
     render();
+    syncPage();
     wake();
     ui.viewer.focus({ preventScroll: true });
     return { ok: true, count: pages.length };
@@ -500,6 +593,7 @@
   function closeViewer() {
     if (!isOpen) return;
     isOpen = false;
+    stopWaiting();
     if (document.fullscreenElement === host) document.exitFullscreen().catch(() => {});
     host.remove();
     document.documentElement.removeAttribute(OPEN_ATTR);
