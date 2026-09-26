@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>화면 맞춤 설정 - Web Scope</title>
+<link rel="stylesheet" href="../common/ui.css">
+<link rel="stylesheet" href="options.css">
+</head>
+<body data-feature="fitMedia">
+  <main>
+    <p class="lead">화면보다 큰 이미지·영상의 높이를 브라우저 화면 안에 들어오도록 제한합니다.</p>
+
+    <section>
+      <h2>크기</h2>
+      <div class="field">
+        <div class="label">최대 높이<small>브라우저 화면 높이 대비</small></div>
+        <input type="range" data-key="percent" min="50" max="100" step="1">
+        <span class="val" data-value-of="percent" data-unit="%"></span>
+      </div>
+    </section>
+
+    <section>
+      <h2>대상</h2>
+      <div class="field">
+        <div class="label">영상에도 적용<small>&lt;video&gt; 요소의 높이도 제한</small></div>
+        <label class="switch"><input type="checkbox" data-key="includeVideo"><span class="slider"></span></label>
+      </div>
+      <div class="field">
+        <div class="label">원본 크기 전환 버튼<small>줄어든 이미지 위에 마우스를 올리면 원본/맞춤 전환 버튼 표시</small></div>
+        <label class="switch"><input type="checkbox" data-key="showToggleButton"><span class="slider"></span></label>
+      </div>
+    </section>
+  </main>
+  <script src="../common/defaults.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>
