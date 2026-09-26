@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>Web Scope</title>
+<link rel="stylesheet" href="../common/ui.css">
+<style>
+  body { width: 300px; }
+  header { display: flex; align-items: center; gap: 10px; padding: 14px 14px 10px; }
+  header img { width: 28px; height: 28px; }
+  header h1 { font-size: 15px; margin: 0; }
+  header p { margin: 0; color: var(--muted); font-size: 11px; }
+  ul { list-style: none; margin: 0; padding: 0 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+  li { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px; }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .info { flex: 1; min-width: 0; }
+  .name { font-weight: 600; }
+  .desc { color: var(--muted); font-size: 11px; }
+  .extra { display: none; margin-top: 8px; align-items: center; gap: 8px; }
+  li.on .extra { display: flex; }
+  .extra .hint { color: var(--muted); font-size: 11px; flex: 1; }
+</style>
+</head>
+<body>
+  <header>
+    <img src="../icons/icon48.png" alt="">
+    <div>
+      <h1>Web Scope</h1>
+      <p>Web browsing utility toolkit</p>
+    </div>
+  </header>
+  <ul id="features"></ul>
+
+  <template id="feature-tpl">
+    <li>
+      <div class="row">
+        <div class="info">
+          <div class="name"></div>
+          <div class="desc"></div>
+        </div>
+        <button class="icon-btn settings" title="상세 설정">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+        <label class="switch"><input type="checkbox"><span class="slider"></span></label>
+      </div>
+    </li>
+  </template>
+
+  <script src="../common/defaults.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
