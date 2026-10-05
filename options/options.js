@@ -35,6 +35,7 @@
       const v = values[el.dataset.key];
       if (el.type === "checkbox") el.checked = !!v;
       else if (el.type === "radio") el.checked = el.value === String(v);
+      else if (el.hasAttribute("data-blank-zero") && !v) el.value = "";
       else el.value = v;
       showValue(el);
     });
@@ -48,6 +49,7 @@
   function read(el) {
     if (el.type === "checkbox") return el.checked;
     if (el.type === "number" || el.type === "range") {
+      if (el.hasAttribute("data-blank-zero") && el.value.trim() === "") return 0;
       const n = Number(el.value);
       const def = WebScope.DEFAULTS[key][el.dataset.key];
       if (!Number.isFinite(n)) return def;

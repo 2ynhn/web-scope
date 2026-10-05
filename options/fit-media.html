@@ -18,6 +18,10 @@
         <input type="range" data-key="percent" min="50" max="100" step="1">
         <span class="val" data-value-of="percent" data-unit="%"></span>
       </div>
+      <div class="field">
+        <div class="label">긴 이미지 제외<small>원본 세로가 입력한 값(px) 이상이면 줄이지 않음 (웹툰처럼 긴 이미지). 비워 두면 사용 안 함</small></div>
+        <span>세로 <input type="number" data-key="skipTallerThan" data-blank-zero min="0" max="100000" step="100" placeholder="예: 3000"> px 이상</span>
+      </div>
     </section>
 
     <section>
