@@ -7,6 +7,7 @@
     fitMedia: {
       enabled: false,
       percent: 96, // 화면 높이 대비 최대 높이(%)
+      skipTallerThan: 0, // 원본 세로가 이 값(px) 이상이면 줄이지 않음 (0: 사용 안 함)
       includeVideo: true,
       showToggleButton: true, // 마우스 오버 시 원본/맞춤 전환 버튼
     },

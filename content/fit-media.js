@@ -2,12 +2,13 @@
 (() => {
   const STYLE_ID = "__web-scope-fit-media__";
   const ORIG_ATTR = "data-ws-fit-orig"; // 원본 보기로 전환된 요소 표시
+  const SKIP_ATTR = "data-ws-fit-skip"; // 너무 길어서 맞추지 않는 요소 표시
   let state = { ...WebScope.DEFAULTS.fitMedia };
 
   const selector = () => (state.includeVideo ? ["img", "video"] : ["img"]);
 
   const css = () => `
-${selector().map((t) => `${t}:not([${ORIG_ATTR}])`).join(",\n")} {
+${selector().map((t) => `${t}:not([${ORIG_ATTR}]):not([${SKIP_ATTR}])`).join(",\n")} {
   max-height: ${state.percent}vh !important;
   object-fit: contain !important;
 }`;
@@ -37,14 +38,43 @@ ${selector().map((t) => `${t}:not([${ORIG_ATTR}])`).join(",\n")} {
     if (document.head) new MutationObserver(reattach).observe(document.head, { childList: true });
   });
 
-  WebScope.get(["fitMedia"]).then((v) => {
-    state = v.fitMedia;
-    apply();
-  });
-  WebScope.onChange("fitMedia", (v) => {
+  /* ---------- 너무 긴 이미지/영상은 줄이지 않음 ---------- */
+  const skipOn = () => state.enabled && state.skipTallerThan > 0;
+
+  function checkTall(el) {
+    if (!(el instanceof HTMLImageElement || el instanceof HTMLVideoElement)) return;
+    const h = el.naturalHeight || el.videoHeight || 0; // 원본 세로 (로딩 전에는 0)
+    const skip = skipOn() && h >= state.skipTallerThan;
+    if (skip !== el.hasAttribute(SKIP_ATTR)) el.toggleAttribute(SKIP_ATTR, skip);
+  }
+
+  function checkAllTall(root = document) {
+    root.querySelectorAll("img, video").forEach(checkTall);
+  }
+
+  // 로딩이 끝나야 원본 크기를 알 수 있음
+  document.addEventListener("load", (e) => skipOn() && checkTall(e.target), true);
+  document.addEventListener("loadedmetadata", (e) => skipOn() && checkTall(e.target), true);
+  // 이미 로딩된 채로 추가되는 요소(캐시 이미지 등)
+  new MutationObserver((muts) => {
+    if (!skipOn()) return;
+    for (const m of muts)
+      for (const n of m.addedNodes) {
+        if (n.nodeType !== 1) continue;
+        checkTall(n);
+        if (n.firstElementChild) checkAllTall(n);
+      }
+  }).observe(document.documentElement, { childList: true, subtree: true });
+  document.addEventListener("DOMContentLoaded", () => skipOn() && checkAllTall());
+
+  function update(v) {
+    const prev = state;
     state = v;
     apply();
-  });
+    if (skipOn() || prev.skipTallerThan > 0) checkAllTall(); // 켜기/끄기/값 변경 반영
+  }
+  WebScope.get(["fitMedia"]).then((v) => update(v.fitMedia));
+  WebScope.onChange("fitMedia", update);
 
   /* ---------- 마우스 오버 버튼 (원본 크기 / 화면 맞춤 전환) ---------- */
   const SIZE = 28;
