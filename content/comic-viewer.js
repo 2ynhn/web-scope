@@ -72,7 +72,7 @@
   // (화면 밖 이미지를 DOM 에서 지우는 사이트에서도 이미 본 페이지가 사라지지 않도록)
   function mergePages(list) {
     const byEl = new Map(pages.map((p) => [p.el, p]));
-    const srcs = new Set(pages.map((p) => p.src));
+    const bySrc = new Map(pages.map((p) => [p.src, p]));
     let changed = false;
     for (const item of list) {
       const existing = byEl.get(item.el);
@@ -82,7 +82,15 @@
         existing.pending = item.pending;
         continue;
       }
-      if (!item.pending && srcs.has(item.src)) continue;
+      const same = !item.pending && bySrc.get(item.src);
+      if (same) {
+        // 사이트가 목록을 다시 그려 요소가 교체된 경우: 기존 페이지를 새 요소에 다시 연결
+        if (!same.el.isConnected) {
+          same.el = item.el;
+          byEl.set(item.el, same);
+        }
+        continue;
+      }
       let at = pages.findIndex(
         (p) => p.el.isConnected && item.el.compareDocumentPosition(p.el) & Node.DOCUMENT_POSITION_FOLLOWING
       );
@@ -90,10 +98,28 @@
       pages.splice(at, 0, item);
       if (at <= index) index++;
       byEl.set(item.el, item);
-      srcs.add(item.src);
+      bySrc.set(item.src, item);
       changed = true;
     }
     return changed;
+  }
+
+  // 페이지의 현재 요소 (DOM 에서 빠졌으면 같은 주소의 이미지를 다시 찾아 연결)
+  function elOf(p) {
+    if (!p) return null;
+    if (p.el.isConnected) return p.el;
+    const img = [...document.images].find((im) => srcOf(im) === p.src);
+    if (img) p.el = img;
+    return img || null;
+  }
+
+  // i 번째 페이지 요소, 없으면 가장 가까운 페이지 요소
+  function nearestEl(i) {
+    for (let d = 0; d < pages.length; d++) {
+      const el = elOf(pages[i - d]) || elOf(pages[i + d]);
+      if (el) return el;
+    }
+    return null;
   }
 
   /* ---------------- 동적 로딩 (페이지 동기 스크롤) ---------------- */
@@ -111,10 +137,10 @@
   // 마지막 이미지 바로 아래 영역이 화면에 들어오도록 스크롤 (step 이 클수록 더 아래로)
   // 페이지 맨 끝으로 바로 건너뛰면 그 사이의 지연 로딩 이미지가 화면에 들어오지 않아 로딩되지 않음
   function lookAhead(step = 0) {
-    const last = pages[pages.length - 1];
-    if (!last || !last.el.isConnected) return;
-    last.el.scrollIntoView({ block: "end", behavior: "instant" });
-    scrollerOf(last.el).scrollBy({ top: innerHeight * 0.8 * (step + 1), behavior: "instant" });
+    const last = elOf(pages[pages.length - 1]);
+    if (!last) return;
+    last.scrollIntoView({ block: "end", behavior: "instant" });
+    scrollerOf(last).scrollBy({ top: innerHeight * 0.8 * (step + 1), behavior: "instant" });
   }
 
   // 뷰어 뒤의 실제 페이지를 현재 이미지 위치로 스크롤해서
@@ -124,10 +150,11 @@
     // 1) 현재~앞쪽 몇 장 중 아직 로딩 안 된(자리표시) 페이지가 있으면 그 위치로
     // 2) 없고 끝에 가까우면 마지막 이미지 아래로 (다음 이미지 로딩 유도)
     // 3) 그 외에는 현재 이미지 위치로
-    const pending = pages.slice(index, index + LOOK_AHEAD + 1).find((p) => p.pending && p.el.isConnected);
+    const pending = pages.slice(index, index + LOOK_AHEAD + 1).find((p) => p.pending && elOf(p));
+    const cur = elOf(pages[index]);
     if (pending) pending.el.scrollIntoView({ block: "start", behavior: "instant" });
     else if (index >= pages.length - LOOK_AHEAD) lookAhead();
-    else if (pages[index].el.isConnected) pages[index].el.scrollIntoView({ block: "center", behavior: "instant" });
+    else if (cur) cur.scrollIntoView({ block: "center", behavior: "instant" });
     // 스크롤 직후 로딩된 이미지를 빨리 반영
     clearTimeout(syncScanTimer);
     syncScanTimer = setTimeout(() => isOpen && scan(), 300);
@@ -621,14 +648,34 @@
     if (!isOpen) return;
     isOpen = false;
     stopWaiting();
-    if (document.fullscreenElement === host) document.exitFullscreen().catch(() => {});
+    const wasFullscreen = document.fullscreenElement === host;
+    if (wasFullscreen) document.exitFullscreen().catch(() => {});
     host.remove();
     document.documentElement.removeAttribute(OPEN_ATTR);
     document.documentElement.style.overflow = savedOverflow;
-    // 보던 이미지 위치로 페이지를 맞춤
-    const p = pages[index];
-    if (p && p.el.isConnected) p.el.scrollIntoView({ block: "start" });
+    restorePosition(wasFullscreen);
     scheduleScan(0);
+  }
+
+  // 보던 이미지 위치로 페이지를 맞춤
+  // 풀화면 종료 시 브라우저가 스크롤을 되돌리거나 사이트가 다시 그리는 경우가 있어 잠시 뒤 한 번 더 맞춤
+  // (그 사이 사용자가 직접 스크롤하면 중단)
+  function restorePosition(wasFullscreen) {
+    let cancelled = false;
+    const cancel = () => (cancelled = true);
+    const inputs = ["wheel", "touchstart", "keydown", "mousedown"];
+    inputs.forEach((t) => addEventListener(t, cancel, { capture: true, passive: true }));
+    setTimeout(() => inputs.forEach((t) => removeEventListener(t, cancel, { capture: true })), 1200);
+
+    const align = () => {
+      if (cancelled || isOpen) return;
+      const el = nearestEl(index);
+      if (el) el.scrollIntoView({ block: "start", behavior: "instant" });
+    };
+    align();
+    requestAnimationFrame(align);
+    [200, 600].forEach((ms) => setTimeout(align, ms));
+    if (wasFullscreen) document.addEventListener("fullscreenchange", () => setTimeout(align, 50), { once: true });
   }
 
   /* ---------------- 설정 / 메시지 / 초기화 ---------------- */
